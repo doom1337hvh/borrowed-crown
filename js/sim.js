@@ -185,7 +185,7 @@
         men: Math.round(pop * (0.016 + rng() * 0.01)),     // the town watch
         pool: pop * 0.01,
         food: cap * (0.5 + rng() * 0.35),
-        unrest: 0, starve: 0, hungry: false, sacked: 0, camp: null,
+        unrest: 0, starve: 0, hungry: false, sacked: 0, camp: null, battle: null,
       };
     });
     return { W, H, keeps, roads, L, starts: shuffle(starts, rng) };
@@ -218,8 +218,8 @@
       this.n = n; this.W = map.W; this.H = map.H;
       this.keeps = map.keeps; this.roads = map.roads; this.L = map.L;
 
-      this.factions = []; this.armies = []; this.events = []; this.fx = [];
-      this.time = 0; this.season = 0; this.yearIdx = 0; this.armySeq = 0;
+      this.factions = []; this.armies = []; this.battles = []; this.events = []; this.fx = [];
+      this.time = 0; this.season = 0; this.yearIdx = 0; this.armySeq = 0; this.battleSeq = 0;
       this.version = 0;                 // bumps whenever a town changes hands
       this.crown = -1; this.dread = 0; this.menace = 0; this.share = 0;
       this.league = -1;                 // the banner the others have united against, if any
@@ -424,6 +424,7 @@
       this.wagons(dt);
       this.march(dt);
       this.sieges(dt);
+      this.fights(dt);
       this.tempers(dt);
       for (const f of this.factions) {
         if (!f.alive || !(f.ai || (this.bot && !this.over))) continue;
@@ -528,7 +529,7 @@
 
     /** Send men out of a town. Returns the army, or null if they cannot go. */
     dispatch(k, to, men) {
-      if (k.camp) return null;                       // invested: the only way out is a sally
+      if (k.camp || k.battle) return null;           // invested: the only way out is a sally
       men = Math.min(Math.floor(k.men), Math.floor(men));
       if (men < 1 || k.id === to) return null;
       const path = this.route(k.id, to, k.owner);
@@ -556,7 +557,7 @@
       const a = {
         id: ++this.armySeq, owner: owner, men: men, food: food, state: 'march',
         path: path, i: 0, d: 0, len: this.len(path[0], path[1]), x: x, y: y,
-        at: -1, breach: 0, sat: 0, home: path[0], rout: false, hungry: false,
+        at: -1, breach: 0, sat: 0, home: path[0], rout: false, hungry: false, battle: null, was: 'march',
       };
       this.armies.push(a);
       return a;
@@ -576,13 +577,25 @@
       const speed = SPEED * (this.season === 3 ? 0.75 : 1);
       const onRoad = new Map();
       for (const a of this.armies) {
+        if (a.state === 'fight' && a.men >= 1) { this.rations(a, 0, dt); continue; }
         if (a.state !== 'march' || a.men < 1) continue;
         this.rations(a, 0, dt);
-        a.d += speed * dt;
+        // Nobody marches through a battle: columns coming up behind one wait for it to end.
+        let block = Infinity;
+        for (const b of this.battles) {
+          if (b.kind !== 'field') continue;
+          const u = a.path[a.i], v = a.path[a.i + 1];
+          const at = b.u === u && b.v === v ? b.du : b.u === v && b.v === u ? a.len - b.du : -1;
+          if (at > a.d + 1e-6) block = Math.min(block, Math.max(a.d, at - 16));
+        }
+        a.d = Math.min(a.d + speed * dt, block);
         while (a.men >= 1 && a.state === 'march' && a.d >= a.len) {
           const k = this.keeps[a.path[a.i + 1]];
           const last = a.i + 1 === a.path.length - 1;
-          if (last || k.owner !== a.owner || k.camp) { this.arrive(a, k); break; }
+          if (last || k.owner !== a.owner || k.camp) {
+            if (k.battle) { a.d = a.len - 0.01; break; }          // fighting at the gates: wait outside
+            this.arrive(a, k); break;
+          }
           // Passing through a friendly town: top up the wagons and keep going.
           const t = Math.min(a.men * CARRY - a.food, k.food * 0.5);
           if (t > 0) { a.food += t; k.food -= t; }
@@ -607,6 +620,7 @@
           if (a.path[a.i] === b.path[b.i] || !this.atWar(a.owner, b.owner)) continue;   // same direction, or no quarrel
           if (a.d + b.d < a.len) continue;                                               // not met yet
           this.fieldBattle(a, b);
+          break;
         }
       }
     }
@@ -628,26 +642,104 @@
       return { win: false, aLoss: att * clamp(0.34 + 0.3 * (inv - 1), 0.34, 0.92), dLoss: Math.min(def * 0.6, att * 0.32 / Math.pow(inv, 0.75) / mult) };
     }
 
-    fieldBattle(a, b) {
-      // Men already running fight at half strength.
-      const r = this.fight(a.men * (a.rout ? 0.5 : 1), b.men, b.rout ? 0.5 : 1);
-      const aLoss = Math.min(a.men, r.aLoss), bLoss = Math.min(b.men, r.dLoss);
-      a.men -= aLoss; b.men -= bLoss;
-      this.bury(aLoss, a.owner); this.bury(bLoss, b.owner);
-      this.report(a.owner, b.owner, aLoss, bLoss, r.win, a.x, a.y, this.keeps[a.path[a.i + 1]]);
-      this.turn(r.win ? b : a, true);
+    /**
+     * Start a battle. Who wins and what it costs is settled now, by `fight`, but it is played
+     * out over a few seconds so it can be watched: the dead fall steadily and the loser breaks
+     * at the end. A side is an army in the field, or part of a town's garrison.
+     */
+    engage(kind, att, def, mult, x, y, k) {
+      const side = (o) => {
+        const men = o.army ? o.army.men : o.force !== undefined ? o.force : o.keep.men;
+        return { owner: o.army ? o.army.owner : o.keep.owner, army: o.army || null, keep: o.keep || null, men0: men, loss: 0, paid: 0, dead: 0 };
+      };
+      const A = side(att), D = side(def);
+      const r = this.fight(A.men0 * (A.army && A.army.rout ? 0.5 : 1), D.men0, mult * (D.army && D.army.rout ? 0.5 : 1));
+      A.loss = Math.min(A.men0, r.aLoss); D.loss = Math.min(D.men0, r.dLoss);
+      const b = {
+        id: ++this.battleSeq, kind: kind, x: x, y: y, at: k ? k.id : -1,
+        t: 0, dur: clamp(2 + Math.sqrt(A.men0 + D.men0) / 16, 2.6, 6), win: r.win, att: A, def: D, done: false,
+        u: -1, v: -1, du: 0,
+      };
+      for (const s of [A, D]) if (s.army) { s.army.was = s.army.state; s.army.state = 'fight'; s.army.battle = b; }
+      if (k) k.battle = b;
+      this.battles.push(b);
+      this.effect({ type: 'battle', id: b.id, kind: kind, x: x, y: y, a: A.owner, b: D.owner, dur: b.dur });
+      return b;
     }
 
-    /** Tell the player about a battle they were in. */
-    report(att, def, aLoss, dLoss, attWon, x, y, near) {
-      this.effect({ type: 'battle', x: x, y: y, a: att, b: def });
+    fieldBattle(a, b) {
+      const fight = this.engage('field', { army: a }, { army: b }, 1, a.x, a.y, null);
+      fight.u = a.path[a.i]; fight.v = a.path[a.i + 1]; fight.du = a.d;
+    }
+
+    /** Let the running battles take their toll, and end the ones that are over. */
+    fights(dt) {
+      if (!this.battles.length) return;
+      for (const b of this.battles) {
+        b.t += dt;
+        const share = Math.min(1, b.t / b.dur);
+        let wiped = false;
+        for (const s of [b.att, b.def]) {
+          const pool = s.army || s.keep, due = s.loss * share - s.paid;
+          if (due > 0) {
+            const n = Math.min(pool.men, due);
+            pool.men -= n; s.paid += due; s.dead += n;
+            this.bury(n, s.owner);
+          }
+          if (s.army && s.army.men < 1) wiped = true;
+        }
+        if (b.t >= b.dur || wiped) this.settle(b);
+      }
+      this.battles = this.battles.filter((b) => !b.done);
+    }
+
+    settle(b) {
+      b.done = true;
+      const A = b.att, D = b.def, k = b.at >= 0 ? this.keeps[b.at] : null;
+      if (k && k.battle === b) k.battle = null;
+      for (const s of [A, D]) if (s.army) { s.army.battle = null; if (s.army.state === 'fight') s.army.state = s.army.was; }
+      let win = b.win;
+      if (A.army && A.army.men < 1) win = false;
+      else if (D.army && D.army.men < 1) win = true;
+      const near = k || this.keeps[b.v >= 0 ? b.v : 0];
+      this.report(b, win, near);
+      const a = A.army, d = D.army;
+      if (b.kind === 'field') {
+        this.turn(win ? d : a, true);
+      } else if (b.kind === 'gate') {                      // a relief column against the besiegers
+        if (win) {
+          this.breakCamp(d, true);
+          if (a.men >= 1) this.enter(a, k);
+          if (k.owner === PLAYER) this.say('The siege of ' + k.name + ' was broken.', 'good', k.id);
+        } else this.turn(a, true);
+      } else if (b.kind === 'camp') {                      // two besiegers, one town
+        if (win) {
+          this.breakCamp(d, true);
+          if (a.men >= 1) { if (k.men < 1) this.takeTown(k, a, 'open'); else this.encamp(a, k); }
+        } else this.turn(a, true);
+      } else if (b.kind === 'sally') {
+        if (win) {
+          this.breakCamp(d, true);
+          if (k.owner === PLAYER) this.say('The siege of ' + k.name + ' was broken.', 'good', k.id);
+        }
+      } else if (b.kind === 'storm') {
+        if (win && a.men >= 1) this.takeTown(k, a, 'storm');
+        else { a.breach = Math.min(1, a.breach + 0.15); if (a.men < 1 && k.camp === a) k.camp = null; }
+      }
+    }
+
+    /** Tell the player how a battle of theirs came out. */
+    report(b, attWon, near) {
+      const att = b.att.owner, def = b.def.owner;
+      this.effect({ type: 'battleEnd', id: b.id, x: b.x, y: b.y, a: att, b: def, won: attWon });
       if (att !== PLAYER && def !== PLAYER) return;
       if (!this.over) this.stats.battles++;
-      const mine = Math.round(att === PLAYER ? aLoss : dLoss), theirs = Math.round(att === PLAYER ? dLoss : aLoss);
+      const mine = Math.round(att === PLAYER ? b.att.dead : b.def.dead), theirs = Math.round(att === PLAYER ? b.def.dead : b.att.dead);
       const won = (att === PLAYER) === attWon;
-      this.effect({ type: 'float', x: x, y: y, text: (won ? 'Won' : 'Lost') + ': ' + mine + ' dead, ' + theirs + ' of theirs', tone: won ? 'good' : 'bad' });
+      this.effect({ type: 'float', x: b.x, y: b.y, text: (won ? 'Won' : 'Lost') + ': ' + mine + ' dead, ' + theirs + ' of theirs', tone: won ? 'good' : 'bad' });
       if (mine + theirs >= 250) {
-        this.say((won ? 'You won' : 'You lost') + ' the field near ' + near.name + '. ' + mine + ' of yours dead, ' + theirs + ' of theirs.', won ? 'good' : 'bad', near.id);
+        const what = b.kind === 'storm' ? (att === PLAYER ? 'the assault on ' : 'the walls of ') : 'the field near ';
+        this.say((won ? 'You won ' : 'You lost ') + what + near.name + '. ' + mine + ' of yours dead, ' + theirs + ' of theirs.', won ? 'good' : 'bad', near.id);
       }
     }
 
@@ -671,13 +763,8 @@
       if (camp) {
         if (!this.atWar(a.owner, camp.owner)) return this.turn(a, false);
         // Two besiegers, one town: the newcomer fights for the camp.
-        const r = this.fight(a.men, camp.men, 1.15);
-        const aLoss = Math.min(a.men, r.aLoss), cLoss = Math.min(camp.men, r.dLoss);
-        a.men -= aLoss; camp.men -= cLoss;
-        this.bury(aLoss, a.owner); this.bury(cLoss, camp.owner);
-        this.report(a.owner, camp.owner, aLoss, cLoss, r.win, camp.x, camp.y, k);
-        if (!r.win) return this.turn(a, true);
-        this.breakCamp(camp, true);
+        this.engage('camp', { army: a }, { army: camp }, 1.15, camp.x, camp.y, k);
+        return;
       }
       if (k.men < 1) return this.takeTown(k, a, 'open');
       this.encamp(a, k);
@@ -707,33 +794,16 @@
 
     /** A relief column fights the besiegers at the gates. */
     relieve(a, k, camp) {
-      const r = this.fight(a.men, camp.men, 1.15);
-      const aLoss = Math.min(a.men, r.aLoss), cLoss = Math.min(camp.men, r.dLoss);
-      a.men -= aLoss; camp.men -= cLoss;
-      this.bury(aLoss, a.owner); this.bury(cLoss, camp.owner);
-      this.report(a.owner, camp.owner, aLoss, cLoss, r.win, camp.x, camp.y, k);
-      if (r.win) {
-        this.breakCamp(camp, true);
-        this.enter(a, k);
-        if (k.owner === PLAYER) this.say('The siege of ' + k.name + ' was broken.', 'good', k.id);
-      } else this.turn(a, true);
+      this.engage('gate', { army: a }, { army: camp }, 1.15, camp.x, camp.y, k);
     }
 
     /** The garrison comes out to fight the camp at its gates. */
     sally(k, frac) {
       const camp = k.camp;
-      if (!camp) return false;
+      if (!camp || k.battle || camp.state !== 'camp') return false;
       const force = Math.floor(k.men * clamp(frac, 0, 1));
       if (force < 1) return false;
-      const r = this.fight(force, camp.men, 1.15);
-      const aLoss = Math.min(force, r.aLoss), cLoss = Math.min(camp.men, r.dLoss);
-      k.men -= aLoss; camp.men -= cLoss;
-      this.bury(aLoss, k.owner); this.bury(cLoss, camp.owner);
-      this.report(k.owner, camp.owner, aLoss, cLoss, r.win, camp.x, camp.y, k);
-      if (r.win) {
-        this.breakCamp(camp, true);
-        if (k.owner === PLAYER) this.say('The siege of ' + k.name + ' was broken.', 'good', k.id);
-      }
+      this.engage('sally', { keep: k, force: force }, { army: camp }, 1.15, camp.x, camp.y, k);
       return true;
     }
 
@@ -795,16 +865,8 @@
     storm(c) {
       if (c.state !== 'camp') return false;
       const k = this.keeps[c.at];
-      const r = this.fight(c.men, k.men, this.wall(k, c));
-      const aLoss = Math.min(c.men, r.aLoss), dLoss = Math.min(k.men, r.dLoss);
-      c.men -= aLoss; k.men -= dLoss;
-      this.bury(aLoss, c.owner); this.bury(dLoss, k.owner);
-      this.report(c.owner, k.owner, aLoss, dLoss, r.win, k.x, k.y, k);
-      if (r.win) this.takeTown(k, c, 'storm');
-      else {
-        c.breach = Math.min(1, c.breach + 0.15);
-        if (c.men < 1) k.camp = null;
-      }
+      if (k.battle) return false;
+      this.engage('storm', { army: c }, { keep: k }, this.wall(k, c), (c.x + k.x) / 2, (c.y + k.y) / 2, k);
       return true;
     }
 
@@ -816,7 +878,7 @@
         k.pop -= sack; this.ledger.dead += sack;
         k.sacked = 30; k.food *= 0.5;
       }
-      k.owner = by; k.since = this.time; k.camp = null;
+      k.owner = by; k.since = this.time; k.camp = null; k.battle = null;
       k.unrest = k.origin === by ? Math.min(k.unrest, 0.15) : Math.max(k.unrest, how === 'storm' ? 0.75 : 0.55);
       k.men = army.men; k.food = Math.min(k.cap, k.food + army.food);
       k.starve = 0; k.hungry = false;
@@ -845,7 +907,7 @@
         const guard = Math.min(1.5, k.men / (k.pop * 0.03));
         const target = clamp(this.pressure(k) - 0.36 * guard, 0, 1.3);
         k.unrest += (target - k.unrest) * ease;
-        if (k.unrest >= 1 && !k.camp) this.revolt(k);
+        if (k.unrest >= 1 && !k.camp && !k.battle) this.revolt(k);
         else if (k.owner === PLAYER && k.unrest > 0.8 && (!worst || k.unrest > worst.unrest)) worst = k;
       }
       if (worst) this.nag('unrest', 20, worst.name + ' is close to revolt. More men on the walls would calm it.', 'omen', worst.id);
@@ -918,6 +980,40 @@
       return this.detach(c, to, Math.max(1, Math.floor(c.men * frac)));
     }
 
+    /** Give one of your columns on the march a new destination. */
+    orderArmy(id, to) {
+      const a = this.armies.find((x) => x.id === id && x.owner === PLAYER && x.state === 'march' && !x.rout);
+      return a && this.redirect(a, to) ? a : null;
+    }
+
+    /**
+     * Work out how a marching army would get to a new destination, without moving it.
+     * It may carry on to the town ahead or turn round on the road, whichever is shorter.
+     * Returns { path, back } (back: it turns round first), or null if there is no way.
+     */
+    redirectPlan(a, to) {
+      const me = a.owner, from = a.path[a.i], next = a.path[a.i + 1];
+      const onward = (node) => {
+        if (node === to) return [node];
+        if (this.keeps[node].owner !== me) return null;          // cannot march through a town that is not ours
+        return this.route(node, to, me);
+      };
+      const length = (p) => { let n = 0; for (let i = 0; i + 1 < p.length; i++) n += this.len(p[i], p[i + 1]); return n; };
+      const fwd = onward(next), back = onward(from);
+      const costF = fwd ? a.len - a.d + length(fwd) : Infinity, costB = back ? a.d + length(back) : Infinity;
+      if (costF === Infinity && costB === Infinity) return null;
+      return costF <= costB ? { path: [from].concat(fwd), back: false } : { path: [next].concat(back), back: true };
+    }
+
+    /** Re-route a marching army along the plan above. */
+    redirect(a, to) {
+      const plan = this.redirectPlan(a, to);
+      if (!plan) return false;
+      if (plan.back) a.d = Math.max(0, a.len - a.d);
+      a.path = plan.path; a.i = 0;
+      return true;
+    }
+
     setLevy(level) { if (LEVY[level]) this.factions[PLAYER].levy = level; }
 
     /** What an assault would probably cost, without the luck. */
@@ -974,7 +1070,7 @@
         }
         return g;
       };
-      const spare = (k) => (k.camp ? 0 : Math.max(0, Math.floor(k.men - floor(k))));
+      const spare = (k) => (k.camp || k.battle ? 0 : Math.max(0, Math.floor(k.men - floor(k))));
 
       // Lean on the people harder when outmatched or under siege; ease off when granaries are bare.
       let foe = 0;
@@ -987,7 +1083,7 @@
       // 1. Towns of mine under siege: sally if the garrison can win, else send a relief column.
       for (const k of own) {
         const c = k.camp;
-        if (!c) continue;
+        if (!c || k.battle) continue;
         if (k.men >= c.men * 1.15 * 1.3) { this.sally(k, 1); continue; }
         const d = this.reach(k.id, me);
         let helper = null;

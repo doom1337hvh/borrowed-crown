@@ -11,9 +11,14 @@
   const num = (n) => Math.round(n).toLocaleString('en-US');
   const pct = (v) => Math.round(v * 100) + '%';
 
-  const stage = $('stage'), canvas = $('map');
-  const R = new BC.Renderer(canvas);
-  const sel = R.sel;
+  const stage = $('stage'), canvas = $('map'), glCanvas = $('map3d');
+  // Two ways of looking at the same war: the flat map, and the land in 3D when the browser can draw it.
+  const flat = new BC.Renderer(canvas);
+  let solid = null;
+  try { if (BC.View3D && BC.View3D.supported()) solid = new BC.View3D(glCanvas, canvas); } catch (e) { solid = null; }
+  const sel = flat.sel;
+  if (solid) { solid.sel = sel; solid.pad = flat.pad; }
+  let R = solid || flat;
 
   let game = null;
   let mode = 'title';            // title | play | over
@@ -50,19 +55,28 @@
     if (m || !y) parts.push(m + (m === 1 ? ' month' : ' months'));
     return parts.join(', ');
   }
+  const isCamp = (a) => a.state === 'camp' || (a.state === 'fight' && a.was === 'camp');
+  /** A siege camp by id (still one while it storms or is sallied against). */
   function campById(id) {
-    for (const a of game.armies) if (a.id === id && a.state === 'camp' && a.men >= 1) return a;
+    for (const a of game.armies) if (a.id === id && a.men >= 1 && isCamp(a)) return a;
     return null;
   }
-  const keyOf = (hit) => (hit.type === 'keep' ? 'k' : 'c') + hit.id;
+  /** A column on the road by id. */
+  function armyById(id) {
+    for (const a of game.armies) if (a.id === id && a.men >= 1 && !isCamp(a)) return a;
+    return null;
+  }
+  const keyOf = (hit) => (hit.type === 'keep' ? 'k' : hit.type === 'camp' ? 'c' : 'a') + hit.id;
   function isMine(hit) {
     if (!hit) return false;
     if (hit.type === 'keep') return game.keeps[hit.id].owner === P;
-    const c = campById(hit.id);
-    return !!c && c.owner === P;
+    const a = hit.type === 'camp' ? campById(hit.id) : armyById(hit.id);
+    return !!a && a.owner === P && !a.rout;
   }
+  /** The town an order aimed at this thing is really aimed at. Columns on the road are not a target. */
   function townOf(hit) {
     if (hit.type === 'keep') return hit.id;
+    if (hit.type === 'army') return -1;
     const c = campById(hit.id);
     return c ? c.at : -1;
   }
@@ -75,6 +89,20 @@
     const w = stage.clientWidth, h = stage.clientHeight;
     R.pad.b = h < 300 ? 30 : w < 640 ? 80 : 58;
     R.pad.t = 6;
+  }
+
+  /** Switch between the 3D land and the flat map. */
+  function setView(kind) {
+    const next = kind === 'world' && solid ? solid : flat;
+    if (next !== R) { R.hover = null; R.aim = null; R.box = null; R.pull = null; next.quietMap = R.quietMap; R = next; }
+    glCanvas.hidden = R !== solid;
+    if (R.game !== game) R.setGame(game);
+    R.resize();
+    const b = $('b-view');
+    b.hidden = !solid;
+    b.textContent = R === solid ? 'Map' : 'World';
+    b.title = R === solid ? 'Show the flat map (V)' : 'Show the land in 3D (V)';
+    try { localStorage.setItem('borrowed-crown-view', R === solid ? 'world' : 'map'); } catch (e) { /* ignore */ }
   }
 
   function begin(demo) {
@@ -94,7 +122,7 @@
     }
     R.setGame(game);
     R.quietMap = demo;
-    sel.clear(); inspect = null; ptr = null; powerKey = '';
+    sel.clear(); inspect = null; ptr = null; powerKey = ''; touches.clear(); gesture = null;
     $('chronicle').textContent = '';
     press('seg-levy', 'levy', 'standard');
     setPaused(false);
@@ -211,7 +239,7 @@
         if (!path) continue;
         lines.push(path.map((i) => R.at(game.keeps[i].x, game.keeps[i].y)));
         men += Math.max(1, Math.floor(k.men * frac)); any = true;
-      } else {
+      } else if (key[0] === 'c') {
         const c = campById(id);
         if (!c || c.owner !== P) continue;
         if (c.at === to) { storming = c; continue; }
@@ -221,6 +249,16 @@
         pts[0] = R.campAt(c);
         lines.push(pts);
         men += Math.max(1, Math.floor(c.men * frac)); any = true;
+      } else {
+        // A column already on the road: it carries on or turns round, whichever is shorter.
+        const a = armyById(id);
+        if (!a || a.owner !== P || a.state !== 'march' || a.rout) continue;
+        const plan = game.redirectPlan(a, to);
+        if (!plan) continue;
+        const pts = plan.path.slice(1).map((i) => R.at(game.keeps[i].x, game.keeps[i].y));
+        pts.unshift(R.armyAt(a));
+        lines.push(pts);
+        men += Math.floor(a.men); any = true;
       }
     }
     let text, tone = 'info';
@@ -259,11 +297,15 @@
         if (id === to && !k.camp) continue;
         if (!k.camp && game.route(id, to, P)) road = true;
         if (game.orderKeep(id, to, frac)) done++;
-      } else {
+      } else if (key[0] === 'c') {
         const c = campById(id);
         if (!c) continue;
         if (c.at === to || game.route(c.at, to, P)) road = true;
         if (game.orderCamp(id, to, frac)) done++;
+      } else {
+        const a = armyById(id);
+        if (!a) continue;
+        if (game.orderArmy(id, to)) { done++; road = true; }
       }
     }
     if (done) BC.audio.play('march');
@@ -278,15 +320,19 @@
   function prune() {
     for (const key of Array.from(sel)) {
       const id = +key.slice(1);
-      if (key[0] === 'k' ? game.keeps[id].owner !== P : !campById(id) || campById(id).owner !== P) sel.delete(key);
+      if (key[0] === 'k') { if (game.keeps[id].owner !== P) sel.delete(key); continue; }
+      const c = campById(id), a = armyById(id);
+      if (key[0] === 'c') { if (!c || c.owner !== P) { sel.delete(key); if (a && a.owner === P && !a.rout) sel.add('a' + id); } }
+      // A selected column that pitches camp stays selected as that camp.
+      else if (!a || a.owner !== P || a.rout) { sel.delete(key); if (c && c.owner === P) sel.add('c' + id); }
     }
-    if (inspect && inspect.type === 'camp' && !campById(inspect.id)) inspect = null;
+    if (inspect && inspect.type !== 'keep' && !campById(inspect.id) && !armyById(inspect.id)) inspect = null;
   }
 
   function selectAll() {
     sel.clear();
     for (const k of game.keeps) if (k.owner === P) sel.add('k' + k.id);
-    for (const a of game.armies) if (a.owner === P && a.state === 'camp' && a.men >= 1) sel.add('c' + a.id);
+    for (const a of game.armies) if (a.owner === P && a.men >= 1 && !a.rout) sel.add((isCamp(a) ? 'c' : 'a') + a.id);
   }
 
   /** The red button: storm with the selected camps, or sally from the selected besieged towns. */
@@ -294,7 +340,8 @@
     let camp = null, town = null;
     for (const key of sel) {
       const id = +key.slice(1);
-      if (key[0] === 'c') { if (!camp) camp = campById(id); } else if (game.keeps[id].camp && !town) town = game.keeps[id];
+      if (key[0] === 'c') { const c = campById(id); if (!camp && c && c.state === 'camp') camp = c; }
+      else if (key[0] === 'k' && game.keeps[id].camp && !game.keeps[id].battle && !town) town = game.keeps[id];
     }
     if (camp) return { kind: 'storm', camp: camp };
     if (town) return { kind: 'sally', town: town };
@@ -324,11 +371,43 @@
     return sel.has(key) && sel.size > 1 ? new Set(sel) : new Set([key]);
   }
 
+  // Camera: two fingers pinch, twist and drag; the right mouse button swings, the middle one drags, the wheel zooms.
+  const touches = new Map();
+  let gesture = null, swing = null;
+  function twoFingers() {
+    const [a, b] = Array.from(touches.values());
+    return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, d: Math.hypot(a.x - b.x, a.y - b.y) || 1, ang: Math.atan2(b.y - a.y, b.x - a.x) };
+  }
+  function cancelPointer() {
+    if (ptr) clearTimeout(ptr.timer);
+    ptr = null; R.pull = null; R.box = null; R.aim = null;
+  }
+
+  canvas.addEventListener('wheel', (e) => {
+    if (mode !== 'play') return;
+    e.preventDefault();
+    const p = point(e);
+    R.zoomAt(p.x, p.y, Math.exp(clamp(e.deltaY, -300, 300) * 0.0014));
+  }, { passive: false });
+
   canvas.addEventListener('pointerdown', (e) => {
-    if (mode !== 'play' || paused || e.button === 2) return;
+    if (mode !== 'play') return;
+    const p0 = point(e);
+    if (e.pointerType === 'touch') {
+      touches.set(e.pointerId, p0);
+      if (touches.size === 2) { cancelPointer(); gesture = twoFingers(); return; }
+      if (touches.size > 2) return;
+    }
+    if (e.button === 2 || e.button === 1) {
+      swing = { id: e.pointerId, x: p0.x, y: p0.y, x0: p0.x, y0: p0.y, moved: false, pan: e.button === 1 };
+      try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* not fatal */ }
+      e.preventDefault();
+      return;
+    }
+    if (paused) return;
     BC.audio.boot();
-    const p = point(e), hit = R.pick(p.x, p.y);
-    ptr = { id: e.pointerId, x0: p.x, y0: p.y, hit: hit, mine: isMine(hit), moved: false, shift: e.shiftKey, done: false, timer: 0 };
+    const p = p0, hit = R.pick(p.x, p.y);
+    ptr = { id: e.pointerId, x0: p.x, y0: p.y, x: p.x, y: p.y, hit: hit, mine: isMine(hit), moved: false, shift: e.shiftKey, done: false, timer: 0, touch: e.pointerType === 'touch' };
     try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* not fatal */ }
     // Press and hold on any town sends the selection there, the way a right click does.
     if (hit && sel.size) {
@@ -344,6 +423,25 @@
   canvas.addEventListener('pointermove', (e) => {
     if (mode !== 'play') return;
     const p = point(e);
+    if (touches.has(e.pointerId)) {
+      touches.set(e.pointerId, p);
+      if (gesture && touches.size === 2) {
+        const g = twoFingers();
+        R.pan(g.x - gesture.x, g.y - gesture.y);
+        R.zoomAt(g.x, g.y, gesture.d / g.d);
+        let turn = g.ang - gesture.ang;
+        if (turn > Math.PI) turn -= 2 * Math.PI; else if (turn < -Math.PI) turn += 2 * Math.PI;
+        R.orbit(-turn, 0);
+        gesture = g;
+        return;
+      }
+    }
+    if (swing && e.pointerId === swing.id) {
+      if (!swing.moved && Math.hypot(p.x - swing.x0, p.y - swing.y0) > 5) swing.moved = true;
+      if (swing.moved) { if (swing.pan) R.pan(p.x - swing.x, p.y - swing.y); else R.orbit(-(p.x - swing.x) * 0.006, (p.y - swing.y) * 0.004); }
+      swing.x = p.x; swing.y = p.y;
+      return;
+    }
     if (!ptr) {
       if (e.pointerType !== 'mouse') return;
       const hit = R.pick(p.x, p.y);
@@ -362,13 +460,28 @@
       if (!R.aim) {
         const c = ptr.hit.type === 'camp' ? campById(ptr.hit.id) : null;
         const k = ptr.hit.type === 'keep' ? game.keeps[ptr.hit.id] : null;
-        const from = k ? R.at(k.x, k.y) : c ? R.campAt(c) : null;
+        const a = ptr.hit.type === 'army' ? armyById(ptr.hit.id) : null;
+        const from = k ? R.at(k.x, k.y) : c ? R.campAt(c) : a ? R.armyAt(a) : null;
         R.pull = from ? { from: from, to: [p.x, p.y] } : null;
       }
-    } else if (!ptr.hit) R.box = { x0: ptr.x0, y0: ptr.y0, x1: p.x, y1: p.y };
+    } else if (!ptr.hit) {
+      // On empty ground a finger drags the land; a mouse draws a selection box.
+      if (ptr.touch && R.is3d) R.pan(p.x - ptr.x, p.y - ptr.y);
+      else R.box = { x0: ptr.x0, y0: ptr.y0, x1: p.x, y1: p.y };
+    }
+    ptr.x = p.x; ptr.y = p.y;
   });
 
   function release(e) {
+    touches.delete(e.pointerId);
+    if (touches.size < 2) gesture = null;
+    if (swing && e.pointerId === swing.id) {
+      const s = swing;
+      swing = null;
+      // A right click that did not turn into a drag is an order for the selection.
+      if (!s.moved && !s.pan && !paused) { const hit = R.pick(s.x, s.y); if (hit && sel.size) { command(townOf(hit), sel); hud(true); } }
+      return;
+    }
     if (!ptr || e.pointerId !== ptr.id) return;
     clearTimeout(ptr.timer);
     const q = ptr, p = point(e);
@@ -394,23 +507,24 @@
       const x0 = Math.min(box.x0, box.x1), x1 = Math.max(box.x0, box.x1), y0 = Math.min(box.y0, box.y1), y1 = Math.max(box.y0, box.y1);
       const inside = (pt) => pt[0] >= x0 && pt[0] <= x1 && pt[1] >= y0 && pt[1] <= y1;
       for (const k of game.keeps) if (k.owner === P && inside(R.at(k.x, k.y))) sel.add('k' + k.id);
-      for (const a of game.armies) if (a.owner === P && a.state === 'camp' && a.men >= 1 && inside(R.campAt(a))) sel.add('c' + a.id);
-    } else { sel.clear(); inspect = null; }
+      for (const a of game.armies) {
+        if (a.owner !== P || a.men < 1 || a.rout) continue;
+        if (isCamp(a)) { if (inside(R.campAt(a))) sel.add('c' + a.id); } else if (inside(R.armyAt(a))) sel.add('a' + a.id);
+      }
+    } else if (!q.moved) { sel.clear(); inspect = null; }
     R.aim = null;
     hud(true);
   }
   canvas.addEventListener('pointerup', release);
   canvas.addEventListener('pointercancel', (e) => {
+    touches.delete(e.pointerId);
+    if (touches.size < 2) gesture = null;
+    if (swing && e.pointerId === swing.id) swing = null;
     if (!ptr || e.pointerId !== ptr.id) return;
-    clearTimeout(ptr.timer); ptr = null; R.pull = null; R.box = null; R.aim = null;
+    cancelPointer();
   });
   canvas.addEventListener('pointerleave', () => { if (!ptr) { R.hover = null; R.aim = null; } });
-  canvas.addEventListener('contextmenu', (e) => {
-    e.preventDefault();
-    if (mode !== 'play' || paused) return;
-    const p = point(e), hit = R.pick(p.x, p.y);
-    if (hit && sel.size) { command(townOf(hit), sel); hud(true); }
-  });
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
   /* ---------- buttons and keys ---------- */
 
@@ -440,6 +554,25 @@
   $('b-sound').addEventListener('click', () => { BC.audio.boot(); setSound(!BC.audio.on); });
   $('b-start').addEventListener('click', play);
   $('b-again').addEventListener('click', play);
+  $('b-view').addEventListener('click', () => setView(R === solid ? 'map' : 'world'));
+  $('b-home').addEventListener('click', () => R.home());
+
+  // Keys held down to move the camera, applied a little every frame.
+  const held = new Set();
+  window.addEventListener('keyup', (e) => held.delete(e.key.toLowerCase()));
+  window.addEventListener('blur', () => held.clear());
+  function steer(dt) {
+    if (!held.size || mode !== 'play') return;
+    const step = 620 * dt;
+    if (held.has('arrowleft')) R.pan(step, 0);
+    if (held.has('arrowright')) R.pan(-step, 0);
+    if (held.has('arrowup')) R.pan(0, step);
+    if (held.has('arrowdown')) R.pan(0, -step);
+    if (held.has('q')) R.orbit(1.4 * dt, 0);
+    if (held.has('e')) R.orbit(-1.4 * dt, 0);
+    if (held.has('=') || held.has('+')) R.zoomAt(stage.clientWidth / 2, stage.clientHeight / 2, Math.exp(-1.6 * dt));
+    if (held.has('-') || held.has('_')) R.zoomAt(stage.clientWidth / 2, stage.clientHeight / 2, Math.exp(1.6 * dt));
+  }
 
   window.addEventListener('keydown', (e) => {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -453,6 +586,9 @@
     else if (k === 'escape') { sel.clear(); inspect = null; R.aim = null; hud(true); }
     else if (k === 'm') setSound(!BC.audio.on);
     else if (k === 's') act();
+    else if (k === 'v') setView(R === solid ? 'map' : 'world');
+    else if (k === 'h' || k === 'home') R.home();
+    else if (k.startsWith('arrow') || 'qe=+-_'.includes(k)) { held.add(k); if (k.startsWith('arrow')) e.preventDefault(); }
   });
   document.addEventListener('visibilitychange', () => { if (document.hidden && mode === 'play' && !game.over) setPaused(true); });
 
@@ -491,12 +627,22 @@
       span('dim', 'town has ' + num(k.men) + ' men, grain ' + pct(k.food / k.cap))].join(' ');
   }
 
+  function briefArmy(a) {
+    const to = game.keeps[a.path[a.path.length - 1]], mine = a.owner === P;
+    const bread = a.men >= 1 ? a.food / a.men : 0;
+    return ['<b>' + (mine ? 'Your column' : esc(game.factions[a.owner].name) + ' column') + '</b>', span('', num(a.men) + ' men'),
+      span('dim', a.state === 'fight' ? 'in battle' : a.rout ? 'routed, running for ' + esc(to.name) : 'marching on ' + esc(to.name)),
+      a.hungry ? span(mine ? 'warn' : 'fine', 'out of bread, men dying') : span('', 'bread for ' + Math.max(1, Math.round(bread)) + (Math.round(bread) === 1 ? ' more second' : ' more seconds')),
+      mine && !a.rout ? span('dim', 'Tap a town to send them there instead.') : ''].join(' ');
+  }
+
   function brief() {
     if (mode === 'title') return span('dim', 'A war between four houses, already a year old. One of them could be yours.');
     if (mode === 'over') return span('dim', 'The realm carries on without you.');
     const h = R.hover || inspect;
     if (h) {
       if (h.type === 'camp') { const c = campById(h.id); if (c && c.owner === P) return briefCamp(c); if (c) return briefTown(game.keeps[c.at]); }
+      else if (h.type === 'army') { const a = armyById(h.id); if (a) return briefArmy(a); }
       else return briefTown(game.keeps[h.id]);
     }
     if (sel.size === 1) {
@@ -504,13 +650,15 @@
       if (key[0] === 'k') return briefTown(game.keeps[id]);
       const c = campById(id);
       if (c) return briefCamp(c);
+      const a = armyById(id);
+      if (a) return briefArmy(a);
     }
     const f = game.factions[P];
     let grain = 0, n = 0, hungry = 0, angry = 0;
     for (const k of game.keeps) if (k.owner === P) { grain += k.food / k.cap; n++; if (k.hungry) hungry++; if (k.unrest > 0.7) angry++; }
     if (sel.size > 1) {
       let men = 0;
-      for (const key of sel) { const id = +key.slice(1); men += key[0] === 'k' ? game.keeps[id].men : (campById(id) || { men: 0 }).men; }
+      for (const key of sel) { const id = +key.slice(1); men += key[0] === 'k' ? game.keeps[id].men : (campById(id) || armyById(id) || { men: 0 }).men; }
       return ['<b>' + sel.size + ' selected</b>', span('', num(men) + ' men'), span('dim', 'Tap a target to march. Hold on one of your own towns to gather there.')].join(' ');
     }
     return ['<b>Your realm</b>', span('', num(f.people) + ' people'), span('', num(f.men) + ' under arms'),
@@ -561,6 +709,9 @@
       else btn.innerHTML = 'Sally out';
     }
     $('brief').innerHTML = brief();
+    let mine = 0;
+    for (const b of game.battles) if (b.att.owner === P || b.def.owner === P) mine++;
+    BC.audio.scene({ playing: mode === 'play' && !paused, season: game.season, battles: game.battles.length, mine: mine, zoom: R.is3d ? clamp(1 - (R.cam.dist - 110) / Math.max(1, R.far - 110), 0, 1) : 0 });
   }
 
   /* ---------- the loop ---------- */
@@ -576,6 +727,8 @@
       // The title screen's war restarts if it ends, or after a few minutes.
       if (mode === 'title' && (game.over || now - demoAt > 240000)) begin(true);
     }
+    steer(dt);
+    if (mode === 'title' && R.is3d && !R.calm) R.orbit(dt * 0.035, 0);       // the title screen circles the realm slowly
     R.draw(dt);
     hud(false);
     requestAnimationFrame(frame);
@@ -588,21 +741,27 @@
     BC.audio.set(sound);
     $('b-sound').setAttribute('aria-pressed', String(sound));
     if (!sound) setSound(false);
+    let view = 'world';
+    try { view = localStorage.getItem('borrowed-crown-view') || 'world'; } catch (e) { /* storage is optional */ }
+    R = view === 'map' || !solid ? flat : solid;
+    glCanvas.hidden = R !== solid;
     R.resize();
     begin(true);
+    setView(R === solid ? 'world' : 'map');
     const fit = () => { frameMap(); R.resize(); };
     if (window.ResizeObserver) new ResizeObserver(fit).observe(stage);
     else window.addEventListener('resize', fit);
     // Follow the page theme: the system setting, or an explicit data-theme on the root.
     const mq = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)');
-    if (mq && mq.addEventListener) mq.addEventListener('change', () => R.readTheme());
-    new MutationObserver(() => R.readTheme()).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class', 'style'] });
-    if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => R.readTheme());
+    const retheme = () => { flat.readTheme(); if (solid) solid.readTheme(); };
+    if (mq && mq.addEventListener) mq.addEventListener('change', retheme);
+    new MutationObserver(retheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class', 'style'] });
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(retheme);
     requestAnimationFrame((t) => { last = t; frame(t); });
   }
 
   // Handy from the browser console, and for the smoke test: BC.live.game is the running simulation.
-  BC.live = { get game() { return game; }, renderer: R };
+  BC.live = { get game() { return game; }, get renderer() { return R; }, setView: setView };
 
   boot();
 })();

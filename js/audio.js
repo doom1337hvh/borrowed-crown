@@ -66,6 +66,11 @@
 
   BC.audio = {
     boot: boot,
+    /**
+     * Told a few times a second what is going on, for ambience that follows the game:
+     * { playing, season (0..3), battles (all being fought), mine (battles the player is in), zoom (0 far .. 1 close) }.
+     */
+    scene(state) { void state; },
     get on() { return on; },
     set(v) { on = !!v; if (master) master.gain.value = on ? 0.2 : 0; },
     play(name) {

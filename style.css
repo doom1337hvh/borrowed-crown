@@ -74,7 +74,7 @@ button { font: inherit; color: inherit; }
 
 /* ---------- the map ---------- */
 .stage { flex: 1 1 auto; position: relative; min-height: 0; overflow: hidden; }
-.stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: default; }
+.stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: default; outline: none; }
 
 .chronicle {
   position: absolute; bottom: 10px; left: max(16px, env(safe-area-inset-left, 0px)); right: max(16px, env(safe-area-inset-right, 0px));

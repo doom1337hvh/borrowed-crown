@@ -108,7 +108,14 @@
       this.u = clamp(this.s / 0.85, 0.8, 1.25);
     }
 
-    at(x, y) { return [this.ox + x * this.s, this.oy + y * this.s]; }
+    at(x, y) { return [this.ox + x * this.s, this.oy + y * this.s, true]; }
+    armyAt(a) { return this.at(a.x, a.y); }
+
+    /* The flat map has no camera: these exist so the page can drive either view. */
+    pan() {}
+    zoomAt() {}
+    orbit() {}
+    home() {}
 
     townR(k) { return (10.5 + 2.4 * k.tier) * this.u; }
 
@@ -126,9 +133,10 @@
       if (!g) return null;
       let best = null, bd = 1e9;
       for (const a of g.armies) {
-        if (a.state !== 'camp') continue;
-        const p = this.campAt(a), d = Math.hypot(p[0] - px, p[1] - py);
-        if (d < 17 * this.u + 6 && d < bd) { bd = d; best = { type: 'camp', id: a.id }; }
+        if (a.men < 1) continue;
+        const camp = a.state === 'camp' || (a.state === 'fight' && a.was === 'camp');
+        const p = camp ? this.campAt(a) : this.armyAt(a), d = Math.hypot(p[0] - px, p[1] - py);
+        if (d < 17 * this.u + 6 && d < bd) { bd = d; best = { type: camp ? 'camp' : 'army', id: a.id }; }
       }
       if (best) return best;
       for (const k of g.keeps) {
@@ -244,7 +252,7 @@
       const g = this.game, th = this.theme;
       for (const e of list) {
         if (e.type === 'battle') {
-          this.marks.push({ x: e.x, y: e.y, life: 0.9 });
+          this.marks.push({ x: e.x, y: e.y, life: Math.max(0.9, e.dur || 0) });
           const n = this.calm ? 0 : 12;
           for (let i = 0; i < n; i++) {
             const a = Math.random() * TAU, v = 30 + Math.random() * 70;
@@ -289,8 +297,10 @@
       this.drawAim();
       for (const k of g.keeps) this.drawTown(k);
       this.drawCrown();
-      for (const a of g.armies) if (a.state === 'camp' && a.men >= 1) this.drawCamp(a);
-      for (const a of g.armies) if (a.state === 'march' && a.men >= 1) this.drawColumn(a);
+      for (const a of g.armies) {
+        if (a.men < 1) continue;
+        if (a.state === 'camp' || (a.state === 'fight' && a.was === 'camp')) this.drawCamp(a); else this.drawColumn(a);
+      }
       this.drawFx(dt);
       if (g.season === 3 && !this.calm) this.drawSnow(dt); else this.flakes.length = 0;
       this.drawBox();
@@ -460,7 +470,13 @@
       const p = this.at(a.x, a.y);
       const from = g.keeps[a.path[a.i]], to = g.keeps[a.path[a.i + 1]];
       const ang = Math.atan2(to.y - from.y, to.x - from.x);
-      const bob = this.calm ? 0 : Math.sin(this.t * 9 + a.id) * 1.2;
+      const bob = this.calm || a.state === 'fight' ? 0 : Math.sin(this.t * 9 + a.id) * 1.2;
+      if (!this.quietMap && this.sel.has('a' + a.id)) {
+        ctx.strokeStyle = css(th.brass); ctx.lineWidth = 3;
+        ctx.setLineDash([6, 4]); ctx.lineDashOffset = this.calm ? 0 : -this.t * 16;
+        ctx.beginPath(); ctx.arc(p[0], p[1], 17 * u, 0, TAU); ctx.stroke();
+        ctx.setLineDash([]); ctx.lineDashOffset = 0;
+      }
       this.token(p[0], p[1] + bob, a, (w, h, fill) => {
         // an arrowhead pointing the way they march
         const d = w / 2 + 6 * u, ax = p[0] + Math.cos(ang) * d, ay = p[1] + bob + Math.sin(ang) * d;

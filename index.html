@@ -40,7 +40,8 @@
   </header>
 
   <main class="stage" id="stage">
-    <canvas id="map" aria-label="Campaign map"></canvas>
+    <canvas id="map3d" aria-hidden="true"></canvas>
+    <canvas id="map" aria-label="Campaign map" tabindex="-1"></canvas>
     <ol class="chronicle" id="chronicle" aria-live="polite"></ol>
     <div class="banner" id="banner" aria-live="assertive"><strong></strong><span></span></div>
     <button type="button" class="btn act" id="b-act" hidden></button>
@@ -67,7 +68,11 @@
             <button type="button" id="levy-heavy" data-levy="heavy" aria-pressed="false" title="Heavy levy: more recruits, fewer farmers, angrier towns">Heavy</button>
           </div>
         </div>
-        <button type="button" class="btn push" id="b-pause" aria-label="Pause" title="Pause (space)">
+        <button type="button" class="btn push" id="b-home" aria-label="Show the whole realm" title="Show the whole realm (H)">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 6V2h4v1.5H3.5V6zM10 2h4v4h-1.5V3.5H10zM2 10h1.5v2.5H6V14H2zM12.5 10H14v4h-4v-1.5h2.5z"/></svg>
+        </button>
+        <button type="button" class="btn" id="b-view" title="Show the flat map (V)" hidden>Map</button>
+        <button type="button" class="btn" id="b-pause" aria-label="Pause" title="Pause (space)">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path id="ico-pause" d="M3 2h4v12H3zM9 2h4v12H9z"/></svg>
         </button>
         <button type="button" class="btn" id="b-sound" aria-label="Sound on" aria-pressed="true" title="Sound (M)">
@@ -109,9 +114,15 @@
   </section>
 
 </div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.149.0/three.min.js"></script>
 <script src="js/sim.js"></script>
+<script src="js/terrain.js"></script>
 <script src="js/audio.js"></script>
 <script src="js/render.js"></script>
+<script src="js/scenery3d.js"></script>
+<script src="js/towns3d.js"></script>
+<script src="js/units3d.js"></script>
+<script src="js/view3d.js"></script>
 <script src="js/main.js"></script>
 </body>
 </html>
