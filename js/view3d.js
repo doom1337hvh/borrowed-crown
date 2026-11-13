@@ -102,6 +102,7 @@
       // Losing the WebGL context (a phone put to sleep, a driver reset) must not stop the game: three.js
       // rebuilds what it needs when the context comes back, and until then the labels stay up.
       this.lost = false;
+      this.glr = 1; this.cap = 2; this.clock = 0; this.slow = 16; this.slowFor = 0;      // the scene's pixel ratio, and the watch kept on the frame time
       glCanvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); this.lost = true; }, false);
       glCanvas.addEventListener('webglcontextrestored', () => { this.lost = false; this.readTheme(); this.resize(); }, false);
       this.drawSel = (key) => this.selRing(key);
@@ -202,7 +203,7 @@
       // The overlay is cheap and text wants to be sharp, so it follows the screen up to 3x. The scene is what costs:
       // it gets a budget of pixels, tighter on phones and tablets, and is never drawn above 2x.
       this.dpr = Math.min(dev, 3, Math.max(1, Math.sqrt(3.6e6 / area)));
-      this.glr = Math.min(dev, 2, Math.max(1, Math.sqrt((this.coarse ? 1.9e6 : 4.2e6) / area)));
+      this.glr = Math.min(dev, this.cap, Math.max(1, Math.sqrt((this.coarse ? 1.9e6 : 4.2e6) / area)));
       this.canvas.width = Math.round(this.w * this.dpr); this.canvas.height = Math.round(this.h * this.dpr);
       this.renderer.setPixelRatio(this.glr);
       this.renderer.setSize(this.w, this.h, false);
@@ -527,6 +528,19 @@
       const g = this.game;
       if (!g) return;
       this.t += dt;
+      // A device that cannot keep up at this sharpness gets a softer scene and a steadier game. It steps down
+      // only after seconds of slow frames, never below 1x, and the labels stay as sharp as they were.
+      const now = performance.now(), gap = now - this.clock;
+      this.clock = now;
+      if (gap > 0 && gap < 250 && this.glr > 1) {
+        this.slow += (gap - this.slow) * 0.05;
+        if (this.slow < 42) this.slowFor = 0;
+        else if (++this.slowFor > 100) {
+          this.cap = this.glr = Math.max(1, this.glr - 0.5);
+          this.renderer.setPixelRatio(this.glr);
+          this.slowFor = 0; this.slow = 16;
+        }
+      }
       // The page gives an order preview as screen points. Turn it into a path on the map now, while
       // the camera is still where the page saw it, so the line can follow the road as the camera moves.
       if (this.aim !== this.aimSeen) this.readAim();
@@ -668,7 +682,7 @@
       const g = this.game, u = this.u, ctx = this.ctx, hov = this.hover, aim = this.aim;
       const key = g.version * 16 + g.crown + 1;
       if (key !== this.rankKey) { this.rankKey = key; this.order.sort(this.byRank); }
-      const npx = (9.6 + 2.4 * this.zoom) * u, nfk = Math.round(npx * 4), ease = this.calm ? 1 : Math.min(1, dt * 9);
+      const npx = (10.2 + 2.2 * this.zoom) * u, nfk = Math.round(npx * 4), ease = this.calm ? 1 : Math.min(1, dt * 9);
       for (let i = 0; i < this.order.length; i++) {
         const id = this.order[i], k = g.keeps[id], r = this.tl[id];
         if (!r.on) continue;
@@ -841,17 +855,23 @@
       }
       return -1;
     }
-    /** The camp or column the page projected to this screen point: its map position is left in this.cx, this.cy. */
+    /**
+     * The camp or column the page projected to this screen point: its map position is left in this.cx, this.cy.
+     * A column has marched a step since the page looked, so the nearest within a few pixels is taken.
+     */
     armyUnder(px, py) {
       const g = this.game, L = this.land;
+      let best = 8, bx = 0, by = 0;
       for (const a of g.armies) {
         if (a.men < 1) continue;
         let x = a.x, y = a.y;
         if (this.isCamp(a)) { this.spot(a); x = this.cx; y = this.cy; }
         this.proj(x, Math.max(0, L.heightAt(x, y)) + 3, y);
-        if (Math.abs(this.px - px) < 1 && Math.abs(this.py - py) < 1) { this.cx = x; this.cy = y; return true; }
+        const d = Math.hypot(this.px - px, this.py - py);
+        if (d < best) { best = d; bx = x; by = y; }
       }
-      return false;
+      this.cx = bx; this.cy = by;
+      return best < 8;
     }
 
     /** The order preview: the road the men would take, and a line still being pulled out from a town. */
@@ -951,17 +971,23 @@
       ctx.lineCap = 'butt';
     }
 
+    /** The hair line from a plate that stepped aside back to its men. Drawn before any plate, so it never crosses a number. */
+    drawLead(r) {
+      const ctx = this.ctx, u = this.u, mid = r.x0 + r.w / 2;
+      if (r.pinned || Math.abs(r.ax - mid) + Math.abs(r.ay - (r.y0 + r.h + 9.1 * u)) <= 3 * u) return;
+      ctx.strokeStyle = this.ink.outline; ctx.lineWidth = 1.3 * u;
+      ctx.beginPath(); ctx.moveTo(mid, r.y0 + r.h / 2); ctx.lineTo(r.ax, r.ay); ctx.stroke();
+      ctx.beginPath(); ctx.arc(r.ax, r.ay, 2 * u, 0, TAU); ctx.fillStyle = this.ink.outline; ctx.fill();
+    }
+
     drawArmy(a, r) {
       const g = this.game, ctx = this.ctx, u = this.u, ink = this.ink;
       const col = g.factions[a.owner].color, x = r.x0, y = r.y0, w = r.w, h = r.h, mid = x + w / 2;
       ctx.globalAlpha = a.rout ? 0.5 : 1;                         // broken and running: a ghost of a plate
       if (!r.pinned) {
-        // A hair line back to the men if the plate had to step aside, and a pointer down to them.
+        // A pointer down to the men (a plate that had to step aside has a hair line back to them instead).
         const base = y + h + 4.6 * u;
-        if (Math.abs(r.ax - mid) + Math.abs(r.ay - base - 4.5 * u) > 3 * u) {
-          ctx.strokeStyle = ink.outline; ctx.lineWidth = 1.3 * u; ctx.beginPath(); ctx.moveTo(mid, y + h / 2); ctx.lineTo(r.ax, r.ay); ctx.stroke();
-          ctx.beginPath(); ctx.arc(r.ax, r.ay, 2 * u, 0, TAU); ctx.fillStyle = ink.outline; ctx.fill();
-        } else {
+        if (Math.abs(r.ax - mid) + Math.abs(r.ay - base - 4.5 * u) <= 3 * u) {
           ctx.beginPath(); ctx.moveTo(mid - 3.4 * u, base); ctx.lineTo(mid + 3.4 * u, base); ctx.lineTo(mid, base + 4.5 * u); ctx.closePath();
           ctx.fillStyle = ink.outline; ctx.fill();
         }
@@ -1061,6 +1087,10 @@
       if (!this.quietMap || this.aim) this.drawAim();
 
       // Towns: garrison, granary, unrest, siege; then the men in the field; then the battles on top of both.
+      for (const a of g.armies) {
+        const r = a.men >= 1 ? this.al.get(a.id) : null;
+        if (r && r.on && r.seen === this.frame) this.drawLead(r);
+      }
       for (const k of g.keeps) { const r = this.tl[k.id]; if (r.on) this.drawTown(k, r); }
       for (const a of g.armies) {
         if (a.men < 1) continue;

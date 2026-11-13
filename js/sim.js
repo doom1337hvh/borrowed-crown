@@ -577,7 +577,11 @@
       const speed = SPEED * (this.season === 3 ? 0.75 : 1);
       const onRoad = new Map();
       for (const a of this.armies) {
-        if (a.state === 'fight' && a.men >= 1) { this.rations(a, 0, dt); continue; }
+        // Men in a battle still eat: a column from its wagons, a siege camp from its own lines as it did before.
+        if (a.state === 'fight' && a.men >= 1) {
+          if (a.was === 'camp') this.forage(a, this.keeps[a.at], dt); else this.rations(a, 0, dt);
+          continue;
+        }
         if (a.state !== 'march' || a.men < 1) continue;
         this.rations(a, 0, dt);
         // Nobody marches through a battle: columns coming up behind one wait for it to end.
@@ -586,7 +590,8 @@
           if (b.kind !== 'field') continue;
           const u = a.path[a.i], v = a.path[a.i + 1];
           const at = b.u === u && b.v === v ? b.du : b.u === v && b.v === u ? a.len - b.du : -1;
-          if (at > a.d + 1e-6) block = Math.min(block, Math.max(a.d, at - 16));
+          // A column that came up level with the fighting in the same moment is held as well, so it cannot slip past.
+          if (at >= 0 && at > a.d - 8) block = Math.min(block, Math.max(a.d, at - 16));
         }
         a.d = Math.min(a.d + speed * dt, block);
         while (a.men >= 1 && a.state === 'march' && a.d >= a.len) {
@@ -619,6 +624,7 @@
           if (a.men < 1 || b.men < 1 || a.state !== 'march' || b.state !== 'march') continue;
           if (a.path[a.i] === b.path[b.i] || !this.atWar(a.owner, b.owner)) continue;   // same direction, or no quarrel
           if (a.d + b.d < a.len) continue;                                               // not met yet
+          if (a.d + b.d > a.len + 16 + 2 * speed * dt) continue;                         // well past each other: one has turned round and they are marching apart
           this.fieldBattle(a, b);
           break;
         }
@@ -840,6 +846,11 @@
     camped(c, k, dt) {
       c.sat += dt;
       c.breach = Math.min(1, c.breach + dt / BREACH_TIME);
+      this.forage(c, k, dt);
+    }
+
+    /** A camp eats where it sits, whether it is digging or fighting. */
+    forage(c, k, dt) {
       // Forage the countryside first, then wagons from friendly towns next door.
       const need = c.men * dt;
       let got = Math.min(need, k.pop * YIELD * HARVEST[this.season] * 0.7 * dt);

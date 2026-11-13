@@ -170,7 +170,7 @@ button { font: inherit; color: inherit; }
   overflow-y: auto;
 }
 .card { background: var(--paper); border: 1.5px solid var(--text); box-shadow: 6px 6px 0 var(--text); padding: 22px 24px 22px; max-width: 470px; width: 100%; box-sizing: border-box; margin-top: auto; -webkit-user-select: text; user-select: text; }
-.card h1 { font: 800 clamp(50px, 13vw, 84px)/.86 var(--display); margin: 0 0 12px; letter-spacing: .005em; text-wrap: balance; }
+.card h1 { font: 800 clamp(44px, 12vw, 58px)/.9 var(--display); margin: 0 0 10px; letter-spacing: .005em; text-wrap: balance; }
 .card h2 { font: 800 clamp(38px, 9vw, 54px)/.92 var(--display); margin: 0 0 10px; text-wrap: balance; }
 .card p { margin: 0 0 12px; font-size: 15.5px; line-height: 1.4; max-width: 62ch; }
 .card .lede { font-size: 17px; font-weight: 600; }
@@ -184,6 +184,9 @@ button { font: inherit; color: inherit; }
 .card .best { font-size: 13px; color: var(--muted); margin: 0; }
 .go { background: var(--brass); color: var(--on-brass); border: 0; border-radius: 3px; height: 46px; padding: 0 20px; font-weight: 700; font-size: 16px; letter-spacing: .02em; cursor: pointer; }
 .go:hover { filter: brightness(1.08); }
+
+/* the title card stands aside and lets the war behind it show */
+#veil-title { background: color-mix(in srgb, var(--sea) 24%, transparent); }
 
 /* the help card sits in the middle, over everything */
 .veil-help { z-index: 6; align-items: center; justify-content: center; padding-left: max(16px, env(safe-area-inset-left, 0px)); }

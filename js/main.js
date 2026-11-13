@@ -39,7 +39,7 @@
   let ptr = null, lastTap = { key: '', t: 0 };
   let hudAt = 0, powerKey = '', bannerTimer = 0, demoAt = 0;
   let helpOpen = false, helpHeld = false;
-  let coach = null;              // the first-reign hints: { step, t, target, army, dest, text, w, h }
+  let coach = null;              // the first-reign hints: { step, t, ping, target, army, dest, text, w, h }
   let briefNow = '', actNow = '';
   const bound = new Map();       // where each selected column or camp is headed, so the selection can follow the men
 
@@ -224,8 +224,11 @@
     const T = target >= 0 ? game.keeps[target] : seat;
     const dx = Math.abs(T.x - seat.x) / 2 + 85, dy = Math.abs(T.y - seat.y) / 2 + 85;
     const aspect = stage.clientWidth / Math.max(1, stage.clientHeight);
+    const dist = clamp(Math.max(dy / 0.3, dx / (0.27 * aspect)), 320, R.far || 2000);
     R.focus((seat.x + T.x) / 2, (seat.y + T.y) / 2);
-    R.goal.dist = clamp(Math.max(dy / 0.3, dx / (0.27 * aspect)), 320, R.far || 2000);
+    R.goal.dist = dist;
+    if (R.tilt) R.goal.pitch = R.tilt(dist);      // the view's own idea of how low to look from that close
+    R.orbit(0, 0);                                // and its limits on that
   }
 
   function play() {
@@ -238,7 +241,7 @@
     game.events.push({ type: 'say', text: 'You hold ' + seat.name + '. Your banner is the blue one.', tone: 'crown', k: seat.id });
     openOn(seat, target);
     // The first reign is walked through its first order, and shown the controls once.
-    if (recall('taught') !== '1') coach = { step: 0, t: 0, target: target, army: -1, dest: -1, text: '', w: 0, h: 0 };
+    if (recall('taught') !== '1') coach = { step: 0, t: 0, ping: -9, target: target, army: -1, dest: -1, text: '', w: 0, h: 0 };
     if (recall('helped') !== '1') openHelp();
     if (document.activeElement && document.activeElement !== document.body && !helpOpen) document.activeElement.blur();
   }
@@ -478,8 +481,9 @@
     return sel.has(key) && sel.size > 1 ? new Set(sel) : new Set([key]);
   }
   /**
-   * What is under a screen point. A column just outside a gate sits on top of its town; if the
-   * pointer is nearer the town's centre than the column's, the town is what was meant.
+   * What is under a screen point. A column still inside the walls it is leaving (or entering) sits
+   * on top of its town; if the pointer is nearer the town's centre than the column's head, the
+   * town is what was meant.
    */
   function pickAt(x, y) {
     const hit = R.pick(x, y);
@@ -489,7 +493,7 @@
     const p = R.armyAt(a), da = Math.hypot(p[0] - x, p[1] - y);
     for (const id of [a.path[a.i], a.path[a.i + 1]]) {
       const k = game.keeps[id];
-      if (!k || Math.hypot(a.x - k.x, a.y - k.y) > 60) continue;
+      if (!k || Math.hypot(a.x - k.x, a.y - k.y) > 26) continue;
       const q = R.at(k.x, k.y);
       if (Math.hypot(q[0] - x, q[1] - y) < da) return { type: 'keep', id: id };
     }
@@ -534,6 +538,7 @@
     if (mode !== 'play') return;
     const p = point(e), touch = e.pointerType === 'touch';
     if (touch) {
+      if (R.coarse === false) R.coarse = true;   // a finger on a screen that also has a mouse: pick as generously as on a phone
       R.hover = null;
       if (e.isPrimary) touches.clear();          // a first finger starts afresh, whatever an earlier touch left behind
       touches.set(e.pointerId, p);
@@ -829,18 +834,21 @@
     if (!coach || mode !== 'play' || helpOpen) { if (!el.hidden) el.hidden = true; return; }
     const c = coach, seat = game.keeps[game.factions[P].seat];
     if (!paused) c.t += dt;
-    let text = '', at = null;
+    let text = '', at = null, mark = -1;
     const mine = (a) => a.owner === P && a.men >= 1;
     if (c.step < 2) {
       const out = game.armies.find(mine);
       if (out) { c.step = 2; c.t = 0; c.army = out.id; remember('taught', '1'); }
       else if (!seat || seat.owner !== P) { coach = null; el.hidden = true; return; }
-      else if (!sel.size) { c.step = 0; text = seat.name + ' is yours. ' + tapWord() + ' it.'; at = overTown(seat); }
+      else if (!sel.size) { c.step = 0; text = seat.name + ' is yours. ' + tapWord() + ' it.'; at = overTown(seat); mark = seat.id; }
       else {
         c.step = 1;
         const T = game.keeps[c.target >= 0 && game.keeps[c.target].owner !== P ? c.target : (c.target = firstTarget(seat))];
-        if (T) { text = 'Now ' + tapWord().toLowerCase() + ' ' + T.name + ' to march on it.'; at = overTown(T); }
+        if (T) { text = 'Now ' + tapWord().toLowerCase() + ' ' + T.name + ' to march on it.'; at = overTown(T); mark = T.id; }
       }
+      // A ring on the ground every few seconds says the same thing in the land itself, and where
+      // the view can, an arrow at the edge of the screen when the town has been dragged out of sight.
+      if (mark >= 0 && !paused && c.t - c.ping > 2.8) { c.ping = c.t; R.ping(mark, 'crown'); }
     }
     if (c.step === 2) {
       // The first men on the road, then what became of them.
@@ -864,13 +872,13 @@
       if (k && c.t < 7) { text = k.name + ' is yours. Its people now feed and fill your armies.'; at = overTown(k); }
       else { coach = null; el.hidden = true; return; }
     }
-    if (!text || !at || at[2] === false) { if (!el.hidden) el.hidden = true; return; }
+    const W = stage.clientWidth, H = stage.clientHeight;
+    if (!text || !at || at[2] === false || at[0] < -10 || at[0] > W + 10 || at[1] < 0 || at[1] > H + 30) { if (!el.hidden) el.hidden = true; return; }
     if (c.text !== text || el.hidden) {
       c.text = text; $('hint-text').textContent = text;
       el.hidden = false;
       c.w = el.offsetWidth; c.h = el.offsetHeight;
     }
-    const W = stage.clientWidth, H = stage.clientHeight;
     const x = clamp(at[0] - c.w / 2, 8, Math.max(8, W - c.w - 8));
     let y = at[1] - c.h - 10, below = false;
     if (y < 6) { y = at[1] + 44; below = true; }           // no room above: hang under it instead
