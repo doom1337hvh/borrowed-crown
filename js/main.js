@@ -105,11 +105,11 @@
     try { localStorage.setItem('borrowed-crown-view', R === solid ? 'world' : 'map'); } catch (e) { /* ignore */ }
   }
 
-  function begin(demo) {
+  function begin(demo, seed) {
     const r = stage.getBoundingClientRect();
     frameMap();
     game = new BC.Game({
-      seed: (Math.random() * 0x7fffffff) | 0,
+      seed: seed || (Math.random() * 0x7fffffff) | 0,
       keeps: clamp(Math.round(r.width * r.height / 26000), r.height < 300 ? 12 : 15, 22),
       aspect: Math.max(60, r.width - R.pad.l - R.pad.r) / Math.max(60, r.height - R.pad.t - R.pad.b),
       bot: demo,
@@ -761,7 +761,11 @@
   }
 
   // Handy from the browser console, and for the smoke test: BC.live.game is the running simulation.
-  BC.live = { get game() { return game; }, get renderer() { return R; }, setView: setView };
+  // restart(seed) begins a fresh reign on a known map, which makes screenshots repeatable.
+  BC.live = {
+    get game() { return game; }, get renderer() { return R; }, setView: setView,
+    restart(seed) { mode = 'play'; $('veil-title').hidden = true; $('veil-end').hidden = true; begin(false, seed); },
+  };
 
   boot();
 })();
