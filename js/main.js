@@ -70,9 +70,10 @@
 
   /* ---------- starting and ending ---------- */
 
-  /** Keep the bottom of the map clear of the chronicle: three lines on a phone, one on a desk. */
+  /** Keep the bottom of the map clear of the chronicle, as far as the screen can afford. */
   function frameMap() {
-    R.pad.b = stage.clientWidth < 640 ? 80 : 34;
+    const w = stage.clientWidth, h = stage.clientHeight;
+    R.pad.b = h < 300 ? 30 : w < 640 ? 80 : 58;
     R.pad.t = 6;
   }
 
@@ -81,7 +82,7 @@
     frameMap();
     game = new BC.Game({
       seed: (Math.random() * 0x7fffffff) | 0,
-      keeps: clamp(Math.round(r.width * r.height / 26000), 15, 22),
+      keeps: clamp(Math.round(r.width * r.height / 26000), r.height < 300 ? 12 : 15, 22),
       aspect: Math.max(60, r.width - R.pad.l - R.pad.r) / Math.max(60, r.height - R.pad.t - R.pad.b),
       bot: demo,
     });
@@ -153,7 +154,7 @@
     const list = $('chronicle'), li = document.createElement('li');
     li.className = tone; li.textContent = text;
     list.appendChild(li);
-    const max = stage.clientHeight < 420 || stage.clientWidth < 640 ? 3 : 4;
+    const max = stage.clientHeight < 300 ? 2 : stage.clientWidth < 640 ? 3 : 4;
     while (list.children.length > max) list.firstChild.remove();
     setTimeout(() => li.classList.add('old'), 9000);
     setTimeout(() => li.remove(), 10000);

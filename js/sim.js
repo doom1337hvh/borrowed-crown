@@ -214,7 +214,7 @@
 
       const n = clamp(Math.round(opts.keeps || 22), 12, 28);
       const rivals = clamp(opts.rivals === undefined ? 3 : opts.rivals, 1, 5);
-      const map = buildMap(this.rng, n, clamp(opts.aspect || 1.5, 0.55, 1.9), rivals + 1);
+      const map = buildMap(this.rng, n, clamp(opts.aspect || 1.5, 0.55, 2.4), rivals + 1);
       this.n = n; this.W = map.W; this.H = map.H;
       this.keeps = map.keeps; this.roads = map.roads; this.L = map.L;
 
@@ -224,7 +224,7 @@
       this.crown = -1; this.dread = 0; this.menace = 0; this.share = 0;
       this.league = -1;                 // the banner the others have united against, if any
       this.over = false; this.ending = null; this.endTime = 0;
-      this.dominionArmed = true; this.toldWinter = false; this.nagged = {};
+      this.dominionArmed = true; this.toldWinter = false; this.toldSiege = false; this.nagged = {};
       this.claim = 0; this.claimant = -1;
       this.ledger = { start: 0, born: 0, dead: 0 };
       this.stats = { reign: 0, peakKeeps: 1, peakShare: 0, taken: 0, lost: 0, battles: 0,
@@ -699,6 +699,10 @@
         if (!this.quiet) this.events.push({ type: 'sfx', name: 'siege' });
       }
       this.parley(a, k);
+      if (a.owner === PLAYER && a.state === 'camp' && !this.toldSiege) {
+        this.toldSiege = true;
+        this.say('Your men made camp outside ' + k.name + '. Hunger will open the gates in time. Select the camp to storm instead.', 'info', k.id);
+      }
     }
 
     /** A relief column fights the besiegers at the gates. */
