@@ -44,13 +44,27 @@
     <canvas id="map" aria-label="Campaign map" tabindex="-1"></canvas>
     <ol class="chronicle" id="chronicle" aria-live="polite"></ol>
     <div class="banner" id="banner" aria-live="assertive"><strong></strong><span></span></div>
+    <div class="hint" id="hint" hidden><p id="hint-text" aria-live="polite"></p></div>
+    <div class="tools" id="tools" role="toolbar" aria-label="View and game" hidden>
+      <button type="button" class="btn" id="b-home" aria-label="Show the whole realm" title="Show the whole realm (H)">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 6V2h4v1.5H3.5V6zM10 2h4v4h-1.5V3.5H10zM2 10h1.5v2.5H6V14H2zM12.5 10H14v4h-4v-1.5h2.5z"/></svg>
+      </button>
+      <button type="button" class="btn" id="b-view" title="Show the flat map (V)" hidden>Map</button>
+      <button type="button" class="btn" id="b-help" aria-label="How to give orders" title="How to give orders (?)">?</button>
+      <button type="button" class="btn" id="b-pause" aria-label="Pause" title="Pause (space)">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path id="ico-pause" d="M3 2h4v12H3zM9 2h4v12H9z"/></svg>
+      </button>
+      <button type="button" class="btn" id="b-sound" aria-label="Sound on" aria-pressed="true" title="Sound (M)">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path id="ico-sound" d="M2 6h3l4-3.5v11L5 10H2z M11 5.2a4 4 0 0 1 0 5.6l-1-1a2.6 2.6 0 0 0 0-3.6z"/></svg>
+      </button>
+    </div>
     <button type="button" class="btn act" id="b-act" hidden></button>
     <div class="halt" id="halt" hidden>Paused</div>
   </main>
 
   <footer class="orders">
     <div class="orders-in gutter">
-      <p class="brief" id="brief"></p>
+      <div class="brief"><p id="brief"></p></div>
       <div class="controls">
         <div class="group">
           <small>March</small>
@@ -68,16 +82,10 @@
             <button type="button" id="levy-heavy" data-levy="heavy" aria-pressed="false" title="Heavy levy: more recruits, fewer farmers, angrier towns">Heavy</button>
           </div>
         </div>
-        <button type="button" class="btn push" id="b-home" aria-label="Show the whole realm" title="Show the whole realm (H)">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 6V2h4v1.5H3.5V6zM10 2h4v4h-1.5V3.5H10zM2 10h1.5v2.5H6V14H2zM12.5 10H14v4h-4v-1.5h2.5z"/></svg>
-        </button>
-        <button type="button" class="btn" id="b-view" title="Show the flat map (V)" hidden>Map</button>
-        <button type="button" class="btn" id="b-pause" aria-label="Pause" title="Pause (space)">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path id="ico-pause" d="M3 2h4v12H3zM9 2h4v12H9z"/></svg>
-        </button>
-        <button type="button" class="btn" id="b-sound" aria-label="Sound on" aria-pressed="true" title="Sound (M)">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path id="ico-sound" d="M2 6h3l4-3.5v11L5 10H2z M11 5.2a4 4 0 0 1 0 5.6l-1-1a2.6 2.6 0 0 0 0-3.6z"/></svg>
-        </button>
+        <div class="group">
+          <small>Select</small>
+          <button type="button" class="btn toggle" id="b-add" aria-pressed="false" title="Pick several: each town, camp or column of yours that you tap joins the selection (or hold Shift)">Several</button>
+        </div>
       </div>
     </div>
   </footer>
@@ -85,13 +93,13 @@
   <section class="veil" id="veil-title" aria-labelledby="t-title">
     <div class="card">
       <h1 id="t-title">Borrowed Crown</h1>
-      <p class="lede">Take the realm. Hold it while you can. Nobody keeps it.</p>
+      <p class="lede">One town, four hundred men, three rival houses. Take the realm. Hold it while you can. Nobody keeps it.</p>
       <ul>
-        <li><b>Orders</b><span>Tap one of your towns, then tap where its men should march. Or drag from one to the other.</span></li>
-        <li><b>Men</b><span>Soldiers are levied from your own people. Every man on the wall is a man off the fields, and the dead stay dead.</span></li>
-        <li><b>Bread</b><span>Armies carry a few weeks of bread. After that they eat from a friendly granary next door, or they starve.</span></li>
-        <li><b>Walls</b><span>Frighten a town into opening its gates, starve it out, or pay in blood to storm it.</span></li>
-        <li><b>Crown</b><span>Rule the most people and it is yours. Then everyone comes for you, your own towns included.</span></li>
+        <li><b>The land</b><span>Turn it, zoom in, and watch your soldiers march, camp and fight.</span></li>
+        <li><b>Orders</b><span><span data-tap>Tap</span> one of your towns, then <span data-tap="l">tap</span> where its men should march.</span></li>
+        <li><b>Men</b><span>Levied from your own people and fed on your own grain. Cut off, an army starves.</span></li>
+        <li><b>Walls</b><span>Three times the garrison opens the gates. Otherwise starve it out, or storm it.</span></li>
+        <li><b>Crown</b><span>Rule the most people and it is yours. Then everyone comes for you.</span></li>
       </ul>
       <div class="foot">
         <button type="button" class="go" id="b-start">Raise your banner</button>
@@ -109,6 +117,36 @@
       <div class="foot">
         <button type="button" class="go" id="b-again">Take it back</button>
         <p class="best" id="e-best"></p>
+      </div>
+    </div>
+  </section>
+
+  <section class="veil veil-help" id="veil-help" aria-labelledby="h-title" hidden>
+    <div class="card" role="dialog" aria-modal="true" aria-labelledby="h-title">
+      <div class="help-head">
+        <h2 id="h-title">Your orders</h2>
+        <div class="seg" role="group" aria-label="Show the controls for" id="seg-help">
+          <button type="button" id="help-for-touch" data-help="touch" aria-pressed="false">Touch</button>
+          <button type="button" id="help-for-mouse" data-help="mouse" aria-pressed="true">Mouse and keys</button>
+        </div>
+      </div>
+      <ul id="help-touch" hidden>
+        <li><b>Select</b><span>Tap one of your towns, camps or columns. Double tap takes everything you have.</span></li>
+        <li><b>March</b><span>Then tap the town to march on. Or drag from your men to the target and let go.</span></li>
+        <li><b>Gather</b><span>Press and hold any town, then let go, to send the selection there. Your own towns too.</span></li>
+        <li><b>Several</b><span>Press Several, tap each town or army you want, then tap the target.</span></li>
+        <li><b>Look</b><span>One finger drags the land. Two fingers pinch to zoom, twist to turn, drag to move.</span></li>
+      </ul>
+      <ul id="help-mouse">
+        <li><b>Select</b><span>Click one of your towns, camps or columns. Shift-click adds one, a drag across open ground boxes several, A takes everything.</span></li>
+        <li><b>March</b><span>Then click the town to march on, or drag to it. Right-click sends the selection to any town, your own included.</span></li>
+        <li><b>Look</b><span>The wheel zooms. Right-drag turns the land, middle-drag or the arrow keys move it. Q and E turn, H shows the whole realm, V the flat map.</span></li>
+        <li><b>Keys</b><span>1, 2 and 3 set how many march. S storms or sallies. Space pauses, M mutes, Esc lets go.</span></li>
+      </ul>
+      <p class="help-bar"><b>The bar below.</b> March is the share of a garrison that goes. Levy is how hard you conscript: more men, fewer farmers, angrier towns. A red button appears when a camp can storm the walls or a besieged town can sally out.</p>
+      <div class="foot">
+        <button type="button" class="go" id="b-help-close">To the war</button>
+        <p class="best">The ? button brings this back.</p>
       </div>
     </div>
   </section>
