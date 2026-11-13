@@ -1,0 +1,10 @@
+{
+  "name": "borrowed-crown",
+  "version": "1.0.0",
+  "description": "A real-time strategy game about holding a crown nobody gets to keep.",
+  "private": true,
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "start": "npx --yes serve ."
+  }
+}

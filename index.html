@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Borrowed Crown</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="A real-time strategy game about holding a crown nobody gets to keep. Levies, grain, sieges and revolts, all played by the same rules for every banner.">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;500;600;700&family=Grenze+Gotisch:wght@600;800&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="game" id="game">
+
+  <header class="ledger">
+    <div class="ledger-in gutter">
+      <p class="wordmark">Borrowed Crown</p>
+      <div class="fact" id="f-reign" title="Time you have worn the crown">
+        <small>Crown held</small>
+        <b><svg class="crown" viewBox="0 0 17 13" aria-hidden="true"><path d="M1 12V2l4 4.5L8.5 1 12 6.5 16 2v10z"/></svg><span id="v-reign">0y 0m</span></b>
+      </div>
+      <div class="fact" title="The calendar. A year lasts eighty seconds.">
+        <small id="v-year">Year 1</small>
+        <b><svg class="season-ico" id="v-season-ico" viewBox="0 0 14 14" aria-hidden="true"></svg><span id="v-season">Spring</span></b>
+      </div>
+      <div class="fact" title="Your age. Nobody outlives the crown.">
+        <small>Your age</small>
+        <b id="v-age">38</b>
+      </div>
+      <div class="fact" title="Your towns, and the share of the realm's people who live under your banner">
+        <small>Your realm</small>
+        <b id="v-realm">1 town, 5%</b>
+      </div>
+      <div class="fact dread" title="How much the other banners fear you. Past the mark they unite against you.">
+        <small id="v-dread-name">Unnoticed</small>
+        <div class="meter" role="meter" aria-label="Dread" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="m-dread"><i id="v-dread"></i><em></em></div>
+      </div>
+      <div class="power" id="power" role="img" aria-label="Share of the realm's people under each banner"></div>
+    </div>
+  </header>
+
+  <main class="stage" id="stage">
+    <canvas id="map" aria-label="Campaign map"></canvas>
+    <ol class="chronicle" id="chronicle" aria-live="polite"></ol>
+    <div class="banner" id="banner" aria-live="assertive"><strong></strong><span></span></div>
+    <button type="button" class="btn act" id="b-act" hidden></button>
+    <div class="halt" id="halt" hidden>Paused</div>
+  </main>
+
+  <footer class="orders">
+    <div class="orders-in gutter">
+      <p class="brief" id="brief"></p>
+      <div class="controls">
+        <div class="group">
+          <small>March</small>
+          <div class="seg" role="group" aria-label="Share of the garrison to send" id="seg-send">
+            <button type="button" id="send-quarter" data-frac="0.25" aria-pressed="false" title="Send a quarter (1)">&frac14;</button>
+            <button type="button" id="send-half" data-frac="0.5" aria-pressed="true" title="Send half (2)">&frac12;</button>
+            <button type="button" id="send-all" data-frac="1" aria-pressed="false" title="Send everyone (3)">All</button>
+          </div>
+        </div>
+        <div class="group">
+          <small>Levy</small>
+          <div class="seg" role="group" aria-label="How hard to conscript" id="seg-levy">
+            <button type="button" id="levy-light" data-levy="light" aria-pressed="false" title="Light levy: few recruits, calmer towns">Light</button>
+            <button type="button" id="levy-standard" data-levy="standard" aria-pressed="true" title="Standard levy">Fair</button>
+            <button type="button" id="levy-heavy" data-levy="heavy" aria-pressed="false" title="Heavy levy: more recruits, fewer farmers, angrier towns">Heavy</button>
+          </div>
+        </div>
+        <button type="button" class="btn push" id="b-pause" aria-label="Pause" title="Pause (space)">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path id="ico-pause" d="M3 2h4v12H3zM9 2h4v12H9z"/></svg>
+        </button>
+        <button type="button" class="btn" id="b-sound" aria-label="Sound on" aria-pressed="true" title="Sound (M)">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path id="ico-sound" d="M2 6h3l4-3.5v11L5 10H2z M11 5.2a4 4 0 0 1 0 5.6l-1-1a2.6 2.6 0 0 0 0-3.6z"/></svg>
+        </button>
+      </div>
+    </div>
+  </footer>
+
+  <section class="veil" id="veil-title" aria-labelledby="t-title">
+    <div class="card">
+      <h1 id="t-title">Borrowed Crown</h1>
+      <p class="lede">Take the realm. Hold it while you can. Nobody keeps it.</p>
+      <ul>
+        <li><b>Orders</b><span>Tap one of your towns, then tap where its men should march. Or drag from one to the other.</span></li>
+        <li><b>Men</b><span>Soldiers are levied from your own people. Every man on the wall is a man off the fields, and the dead stay dead.</span></li>
+        <li><b>Bread</b><span>Armies carry a few weeks of bread. After that they eat from a friendly granary next door, or they starve.</span></li>
+        <li><b>Walls</b><span>Frighten a town into opening its gates, starve it out, or pay in blood to storm it.</span></li>
+        <li><b>Crown</b><span>Rule the most people and it is yours. Then everyone comes for you, your own towns included.</span></li>
+      </ul>
+      <div class="foot">
+        <button type="button" class="go" id="b-start">Raise your banner</button>
+        <p class="best" id="t-best">There is no victory screen.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="veil" id="veil-end" aria-labelledby="e-title" hidden>
+    <div class="card">
+      <h2 id="e-title">The crown passes on</h2>
+      <p class="lede" id="e-lede"></p>
+      <dl id="e-stats"></dl>
+      <p id="e-epitaph"></p>
+      <div class="foot">
+        <button type="button" class="go" id="b-again">Take it back</button>
+        <p class="best" id="e-best"></p>
+      </div>
+    </div>
+  </section>
+
+</div>
+<script src="js/sim.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/render.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
