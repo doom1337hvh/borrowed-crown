@@ -1,7 +1,9 @@
 /*
   Borrowed Crown
-  Layout: one screen. A slim ledger along the top, the campaign map filling everything
-  else, and the orders along the bottom where a thumb can reach them.
+  Layout: one screen. A slim ledger along the top, the land filling everything else, and
+  the orders along the bottom where a thumb can reach them. The buttons that look after
+  the view and the game (frame the realm, flat map, help, pause, sound) float in the top
+  right corner of the land, so the orders bar never has to wrap.
 */
 :root {
   /* the map */
@@ -46,6 +48,7 @@ body {
   overflow: hidden; overscroll-behavior: none;
   -webkit-user-select: none; user-select: none;
   -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;          /* quick taps on the bar must not zoom the page */
 }
 button { font: inherit; color: inherit; }
 :focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
@@ -74,7 +77,7 @@ button { font: inherit; color: inherit; }
 
 /* ---------- the map ---------- */
 .stage { flex: 1 1 auto; position: relative; min-height: 0; overflow: hidden; }
-.stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: default; outline: none; }
+.stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: default; outline: none; -webkit-touch-callout: none; }
 
 .chronicle {
   position: absolute; bottom: 10px; left: max(16px, env(safe-area-inset-left, 0px)); right: max(16px, env(safe-area-inset-right, 0px));
@@ -108,15 +111,40 @@ button { font: inherit; color: inherit; }
 .banner.crown strong { color: var(--brass); }
 .banner.bad strong, .banner.omen strong { color: var(--bad); }
 
-.halt { position: absolute; inset: 0; display: grid; place-items: center; background: color-mix(in srgb, var(--sea) 45%, transparent); font: 800 clamp(40px, 9vw, 72px)/1 var(--display); }
+/* The land can still be turned and read while the war is halted, so the veil lets every touch through. */
+.halt {
+  position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none;
+  background: color-mix(in srgb, var(--sea) 32%, transparent); font: 800 clamp(40px, 9vw, 72px)/1 var(--display);
+  text-shadow: 0 0 18px var(--paper), 0 0 6px var(--paper);
+}
+
+/* view and game buttons, top right of the land */
+.tools { position: absolute; z-index: 2; top: 10px; right: max(16px, env(safe-area-inset-right, 0px)); display: flex; gap: 6px; }
+.tools .btn { background: color-mix(in srgb, var(--paper) 92%, transparent); height: 40px; min-width: 40px; padding: 0 10px; font-size: 15px; }
+
+/* a first-reign hint that points at something in the land; main.js moves it every frame */
+.hint { position: absolute; z-index: 1; left: 0; top: 0; max-width: min(240px, 70%); pointer-events: none; --ax: 50%; }
+.hint p {
+  position: relative; margin: 0; padding: 6px 10px 7px; background: var(--text); color: var(--paper); border-radius: 3px;
+  font-size: 13.5px; font-weight: 600; line-height: 1.25; box-shadow: 3px 3px 0 color-mix(in srgb, var(--text) 30%, transparent);
+  animation: hint-bob 1.6s ease-in-out infinite;
+}
+.hint p::after { content: ""; position: absolute; left: var(--ax); bottom: -5px; width: 11px; height: 11px; margin-left: -5.5px; background: var(--text); transform: rotate(45deg); }
+.hint.below p::after { bottom: auto; top: -5px; }
+@keyframes hint-bob { 50% { transform: translateY(-4px); } }
 
 /* ---------- orders (bottom) ---------- */
 .orders { background: var(--paper); border-top: 1px solid var(--rule); flex: none; }
 .orders-in { display: flex; flex-direction: column; gap: 6px; padding-block: 6px 8px; }
-.brief { height: 2.5em; overflow: hidden; margin: 0; font-size: 13.5px; line-height: 1.25; display: flex; flex-wrap: wrap; align-content: center; gap: 0 12px; }
-.brief b { font-weight: 700; }
+/* The briefing line has a fixed height so the land never jumps. Its text is centred when it fits
+   and starts at the top when it does not (auto margins collapse), so the name is never cut off. */
+.brief { height: 2.5em; overflow: hidden; font-size: 13.5px; line-height: 1.25; display: flex; flex-direction: column; }
+.brief p { margin: auto 0; display: flex; flex-wrap: wrap; gap: 0 12px; min-width: 0; }
+.brief b { font-weight: 700; white-space: nowrap; }
 .brief span { white-space: nowrap; }
 .brief .dim { color: var(--muted); }
+.brief .tip { color: var(--muted); white-space: normal; }
+.brief .wrap { white-space: normal; }
 .brief .warn { color: var(--bad); font-weight: 600; }
 .brief .fine { color: var(--good); font-weight: 600; }
 .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
@@ -128,9 +156,10 @@ button { font: inherit; color: inherit; }
 .seg button[aria-pressed="true"] { background: var(--text); color: var(--paper); }
 .btn { background: none; border: 1.5px solid var(--text); border-radius: 3px; height: 41px; min-width: 41px; padding: 0 12px; font-weight: 700; font-size: 14px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 .btn svg { width: 16px; height: 16px; fill: currentColor; flex: none; }
-.btn.act { position: absolute; z-index: 2; right: max(16px, env(safe-area-inset-right, 0px)); bottom: 10px; background: var(--bad); border-color: var(--paper); color: var(--paper); height: 44px; padding: 0 16px; font-size: 15px; box-shadow: 3px 3px 0 var(--text); }
+.btn.toggle[aria-pressed="true"] { background: var(--text); color: var(--paper); }
+.btn.act { position: absolute; z-index: 2; right: max(16px, env(safe-area-inset-right, 0px)); bottom: 10px; background: var(--bad); border-color: var(--paper); color: var(--paper); height: 44px; padding: 0 16px; font-size: 15px; box-shadow: 3px 3px 0 var(--text); white-space: nowrap; }
 .btn.act small { font-weight: 500; opacity: .9; }
-.push { margin-left: auto; }
+.btn.act:disabled { background: var(--paper); border-color: var(--bad); color: var(--bad); box-shadow: none; cursor: default; }
 
 /* ---------- title and ending ---------- */
 .veil {
@@ -156,6 +185,15 @@ button { font: inherit; color: inherit; }
 .go { background: var(--brass); color: var(--on-brass); border: 0; border-radius: 3px; height: 46px; padding: 0 20px; font-weight: 700; font-size: 16px; letter-spacing: .02em; cursor: pointer; }
 .go:hover { filter: brightness(1.08); }
 
+/* the help card sits in the middle, over everything */
+.veil-help { z-index: 6; align-items: center; justify-content: center; padding-left: max(16px, env(safe-area-inset-left, 0px)); }
+.veil-help .card { margin: auto; max-width: 520px; }
+.help-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; margin-bottom: 14px; }
+.help-head h2 { margin: 0; font-size: clamp(30px, 7vw, 40px); }
+.help-head .seg button { height: 34px; }
+.card .help-bar { font-size: 13.5px; color: var(--muted); border-top: 1px solid var(--rule); padding-top: 10px; margin-bottom: 14px; }
+.card .help-bar b { color: var(--text); }
+
 /* ---------- narrow screens ---------- */
 @media (max-width: 640px) {
   .wordmark { display: none; }
@@ -164,16 +202,27 @@ button { font: inherit; color: inherit; }
   .dread { flex: 0 0 104px; }
   .power { flex: 1 1 120px; min-width: 110px; height: 8px; }
   .brief { font-size: 12.5px; height: 3.75em; }
-  .btn.act { bottom: auto; top: 10px; }
+  .btn.act { bottom: auto; top: 58px; }                /* under the view buttons, clear of the chronicle */
   .group > small { display: none; }
-  .seg button { min-width: 38px; padding: 0 7px; }
+  .controls { flex-wrap: nowrap; gap: 6px; }
+  .seg button { min-width: 36px; padding: 0 6px; }
   .btn { padding: 0 9px; }
+  .controls .group:last-child { margin-left: auto; }
+  .veil-help .card ul { font-size: 13.5px; }
   .veil { padding-block: 12px 14px; padding-left: max(16px, env(safe-area-inset-left, 0px)); }
   .card { padding: 18px 18px 18px; box-shadow: 4px 4px 0 var(--text); }
   .card ul { font-size: 13.5px; gap: 6px; }
   .card li { grid-template-columns: 62px 1fr; gap: 8px; }
   .card p { font-size: 14.5px; }
   .chronicle li { font-size: 12.5px; }
+}
+/* the narrowest phones: the three order groups still share one row */
+@media (max-width: 350px) {
+  .controls { gap: 5px; }
+  .seg button { min-width: 31px; padding: 0 4px; font-size: 13px; }
+  .controls .btn { padding: 0 6px; font-size: 13px; }
+  .tools { gap: 4px; }
+  .tools .btn { min-width: 38px; padding: 0 8px; }
 }
 @media (max-height: 560px) {
   .card h1 { font-size: 44px; }
@@ -194,10 +243,26 @@ button { font: inherit; color: inherit; }
   .seg button { height: 34px; min-width: 36px; padding: 0 7px; }
   .btn { height: 37px; min-width: 37px; padding: 0 8px; }
   .btn.act { top: auto; bottom: 8px; height: 40px; }
-  .push { margin-left: 0; }
+  .controls .btn { height: 37px; }
+  .tools { top: 6px; gap: 5px; }
+  .tools .btn { height: 36px; min-width: 36px; padding: 0 8px; }
+  /* the cards lie wide and short */
+  .veil { padding-block: 8px; }
+  .card { max-width: 720px; padding: 12px 18px 14px; }
+  .card h1 { font-size: 34px; margin-bottom: 6px; }
+  .card h2 { font-size: 30px; margin-bottom: 6px; }
+  .card .lede { font-size: 14.5px; margin-bottom: 8px; }
+  .card ul { font-size: 13px; gap: 3px; margin-bottom: 8px; }
+  .card dl { font-size: 13px; gap: 2px 16px; padding: 6px 0; margin-bottom: 8px; grid-template-columns: 1fr auto 1fr auto; }
+  .card p { font-size: 13.5px; margin-bottom: 8px; }
+  .go { height: 40px; }
+  .veil-help .card { max-width: 720px; }
+  .help-head { margin-bottom: 8px; }
+  .card .help-bar { font-size: 12.5px; padding-top: 6px; margin-bottom: 8px; }
   .chronicle { bottom: 6px; }
   .chronicle li { font-size: 12px; padding-block: 2px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .banner, .chronicle li, .meter i, .power i { transition: none; }
+  .hint p { animation: none; }
 }
